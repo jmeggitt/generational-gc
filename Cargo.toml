@@ -1,0 +1,14 @@
+[package]
+name = "garbage_collector"
+version = "0.1.0"
+edition = "2018"
+
+[features]
+default = []
+nightly = ["allocator_api"]
+allocator_api = []
+drop_heap = []
+
+[dependencies]
+parking_lot = "0.12.0"
+
