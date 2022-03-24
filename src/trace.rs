@@ -1,18 +1,25 @@
+use crate::mark::{MarkWord, TestMark};
+use crate::ptr::DirectObjUnknown;
 use std::alloc::Layout;
 use std::ptr::NonNull;
 
 pub type TraceContext = ();
 
 pub unsafe trait HeapObjectLayout {
+    type MarkWord: MarkWord;
+
+    /// Get a reference to the mark word of an unknown object on the heap
+    unsafe fn mark<'a>(ptr: DirectObjUnknown) -> &'a Self::MarkWord;
+
     /// Get the layout of an unknown object on the heap by its pointer
-    unsafe fn layout(ptr: NonNull<()>) -> Layout;
+    unsafe fn layout(ptr: DirectObjUnknown) -> Layout;
 
     /// Invoke the trace function of an unknown object on the heap
-    unsafe fn trace(ptr: NonNull<()>, cxt: &mut TraceContext);
+    unsafe fn trace(ptr: DirectObjUnknown, cxt: &mut TraceContext);
 
     /// Drop the data of an unknown object on the heap
     #[cfg(feature = "drop_heap")]
-    unsafe fn drop(ptr: NonNull<()>);
+    unsafe fn drop(ptr: DirectObjUnknown);
 }
 
 pub trait HeapObjectSetup<T>: HeapObjectLayout {
@@ -28,18 +35,25 @@ pub trait Trace {
 pub struct AnnotatedMixedHeap;
 
 unsafe impl HeapObjectLayout for AnnotatedMixedHeap {
-    unsafe fn layout(ptr: NonNull<()>) -> Layout {
+    type MarkWord = TestMark;
+
+    unsafe fn mark<'a>(ptr: DirectObjUnknown) -> &'a Self::MarkWord {
+        let annotation = ptr.cast::<HeapAnnotation>().as_ptr();
+        &(*annotation).mark
+    }
+
+    unsafe fn layout(ptr: DirectObjUnknown) -> Layout {
         let annotation = ptr.cast::<HeapAnnotation>().as_ref();
         annotation.layout
     }
 
-    unsafe fn trace(ptr: NonNull<()>, cxt: &mut TraceContext) {
+    unsafe fn trace(ptr: DirectObjUnknown, cxt: &mut TraceContext) {
         let annotation = ptr.cast::<HeapAnnotation>().as_ref();
         (annotation.vtable.trace)(ptr, cxt);
     }
 
     #[cfg(feature = "drop_heap")]
-    unsafe fn drop(ptr: NonNull<()>) {
+    unsafe fn drop(ptr: DirectObjUnknown) {
         let annotation = ptr.cast::<HeapAnnotation>().as_ref();
         (annotation.vtable.drop)(ptr, cxt);
     }
@@ -54,6 +68,7 @@ impl<T: TypedTrace> HeapObjectSetup<T> for AnnotatedMixedHeap {
         let heap = ptr.cast::<AnnotatedHeapData<T>>().as_mut();
 
         heap.annotation.layout = layout;
+        heap.annotation.mark = TestMark::default();
         heap.annotation.vtable = T::vtable();
 
         NonNull::new_unchecked(&mut heap.data as *mut T)
@@ -89,6 +104,7 @@ unsafe impl<T: Trace> TypedTrace for T {
 #[repr(C)]
 struct HeapAnnotation {
     layout: Layout,
+    mark: TestMark,
     vtable: ObjectVTable,
 }
 

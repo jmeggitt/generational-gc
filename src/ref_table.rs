@@ -26,6 +26,8 @@ impl<T: ?Sized> OpenRefSlot<T> {
 #[test]
 #[cfg(test)]
 fn check_ptr_size() {
+    use std::mem::size_of;
+
     // Verify that ObjectOrNextEmpty<T> is the size of a pointer
     // If it isn't it won't break anything, but it would be memory inefficient
     assert_eq!(size_of::<ObjectOrNextEmpty<()>>(), size_of::<*mut ()>());

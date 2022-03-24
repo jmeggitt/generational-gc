@@ -1,4 +1,6 @@
+use crate::collect::VisitHeap;
 use crate::mem::block::AllocationBlock;
+use crate::ptr::{DirectObjPtr, DirectObjUnknown};
 use crate::trace::{AnnotatedMixedHeap, HeapObjectLayout, HeapObjectSetup};
 use std::alloc::Layout;
 use std::marker::PhantomData;
@@ -14,7 +16,7 @@ pub trait Heap<T>: VisitHeap {
 
     /// Create an initialized object on the heap by pushing a value. If space can not be allocated,
     /// the value is returned to the caller.
-    fn try_push_to_heap(&mut self, value: T) -> Result<NonNull<T>, T> {
+    fn try_push_to_heap(&mut self, value: T) -> Result<DirectObjPtr<T>, T> {
         match self.try_alloc_uninit() {
             None => Err(value),
             Some(mut ptr) => unsafe {
@@ -23,13 +25,6 @@ pub trait Heap<T>: VisitHeap {
             },
         }
     }
-}
-
-pub trait VisitHeap {
-    type Entry: Into<NonNull<()>>;
-    type EntryIter: IntoIterator<Item = Self::Entry>;
-
-    fn iter_entries(&self) -> Self::EntryIter;
 }
 
 pub struct HeapRegion<R, L = AnnotatedMixedHeap> {
@@ -41,9 +36,15 @@ pub struct HeapRegion<R, L = AnnotatedMixedHeap> {
 
 impl<R: AllocationBlock, L> From<R> for HeapRegion<R, L> {
     fn from(region: R) -> Self {
+        let mut remaining = region.start().as_ptr() as usize;
+
+        if remaining % Self::heap_align() > 0 {
+            remaining += Self::heap_align() - (remaining % Self::heap_align())
+        }
+
         HeapRegion {
-            remaining: region.start(),
             region,
+            remaining: NonNull::new(remaining as _).unwrap(),
             objects: Vec::new(),
             _phantom: PhantomData,
         }
@@ -51,10 +52,15 @@ impl<R: AllocationBlock, L> From<R> for HeapRegion<R, L> {
 }
 
 impl<R, L> HeapRegion<R, L> {
-    /// Completely arbitrary approach in an attempt to make sure contents are aligned to the the
-    /// word size
-    pub const fn min_alignment() -> usize {
-        align_of::<*mut ()>()
+    /// Completely arbitrary approach in an attempt to make sure contents are aligned to be easily index-able by pointer.
+    pub const fn heap_align() -> usize {
+        let ptr_align = align_of::<*mut ()>();
+
+        if ptr_align > 8 {
+            ptr_align
+        } else {
+            8
+        }
     }
 }
 
@@ -64,27 +70,20 @@ impl<R: AllocationBlock, L> HeapRegion<R, L> {
             - (self.remaining.as_ptr() as usize - self.region.start().as_ptr() as usize)
     }
 
-    fn offset_for_align(ptr: usize, align: usize) -> usize {
-        if ptr % align == 0 {
-            return 0;
-        }
-
-        align - (ptr % align)
-    }
-
     /// Allocate a new object within this heap
     pub fn alloc_layout(&mut self, layout: Layout) -> Option<NonNull<u8>> {
-        let layout = layout.align_to(Self::min_alignment()).ok()?.pad_to_align();
-        let padding = Self::offset_for_align(self.remaining.as_ptr() as usize, layout.align());
+        assert!(layout.align() <= Self::heap_align());
+        let layout = layout.align_to(Self::heap_align()).ok()?.pad_to_align();
 
-        if layout.size() + padding > self.remaining_space() {
+        if layout.size() > self.remaining_space() {
             return None;
         }
 
-        let target = self.remaining.as_ptr() as usize + padding;
+        let target = self.remaining.as_ptr() as usize;
         self.remaining = NonNull::new((target + layout.size()) as *mut _).unwrap();
 
-        Some(NonNull::new(target as *mut _).unwrap())
+        // This should never be null. Maybe switch to new_unchecked?
+        NonNull::new(target as *mut u8)
     }
 }
 
