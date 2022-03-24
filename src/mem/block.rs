@@ -1,8 +1,11 @@
+use std::alloc::Layout;
 use std::ptr::NonNull;
-use std::alloc::{GlobalAlloc, Layout, System};
 
 #[cfg(feature = "allocator_api")]
-use std::alloc::{Allocator, Global, AllocError};
+use std::alloc::{AllocError, Allocator, Global};
+
+#[cfg(not(feature = "allocator_api"))]
+use std::alloc::{GlobalAlloc, System};
 
 pub unsafe trait AllocationBlock {
     fn start(&self) -> NonNull<u8>;
@@ -32,7 +35,7 @@ impl OwnedMemoryBlock {
         OwnedMemoryBlock {
             layout,
             ptr: NonNull::new(unsafe { System.alloc(layout) })
-                .expect("Failed to allocate memory for OwnedMemoryBlock")
+                .expect("Failed to allocate memory for OwnedMemoryBlock"),
         }
     }
 }
@@ -40,8 +43,7 @@ impl OwnedMemoryBlock {
 #[cfg(feature = "allocator_api")]
 impl<A: Allocator + Default> OwnedMemoryBlock<A> {
     pub fn new(layout: Layout) -> Self {
-        Self::new_in(layout, A::default())
-            .expect("Failed to allocate memory for OwnedMemoryBlock")
+        Self::new_in(layout, A::default()).expect("Failed to allocate memory for OwnedMemoryBlock")
     }
 }
 
@@ -69,4 +71,3 @@ impl Drop for OwnedMemoryBlock {
         unsafe { System.dealloc(self.ptr.as_ptr(), self.layout) }
     }
 }
-

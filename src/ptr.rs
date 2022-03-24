@@ -1,6 +1,7 @@
 use std::ptr::NonNull;
-use crate::collect::DirectObjPtr;
-use crate::header::Header;
+
+/// Placeholder so it can be swapped out later with a struct if needed
+pub type DirectObjPtr<T> = NonNull<T>;
 
 #[repr(transparent)]
 pub struct GcPtr<T> {
@@ -12,8 +13,3 @@ pub struct WeakGcPtr<T> {
     ptr: GcPtr<T>,
     generation: u64,
 }
-
-
-
-
-

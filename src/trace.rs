@@ -3,7 +3,6 @@ use std::ptr::NonNull;
 
 pub type TraceContext = ();
 
-
 pub unsafe trait HeapObjectLayout {
     /// Get the layout of an unknown object on the heap by its pointer
     unsafe fn layout(ptr: NonNull<()>) -> Layout;
@@ -15,7 +14,6 @@ pub unsafe trait HeapObjectLayout {
     #[cfg(feature = "drop_heap")]
     unsafe fn drop(ptr: NonNull<()>);
 }
-
 
 pub trait HeapObjectSetup<T>: HeapObjectLayout {
     fn wrap_layout(data_layout: Layout) -> Layout;
@@ -62,8 +60,7 @@ impl<T: TypedTrace> HeapObjectSetup<T> for AnnotatedMixedHeap {
     }
 }
 
-
-trait TypedTrace {
+pub unsafe trait TypedTrace {
     fn vtable() -> ObjectVTable;
 
     unsafe fn _trace(ptr: NonNull<()>, cxt: &mut TraceContext);
@@ -71,7 +68,7 @@ trait TypedTrace {
     unsafe fn _drop(ptr: NonNull<()>);
 }
 
-impl<T: Trace> TypedTrace for T {
+unsafe impl<T: Trace> TypedTrace for T {
     fn vtable() -> ObjectVTable {
         ObjectVTable {
             trace: <T as TypedTrace>::_trace,
@@ -89,7 +86,6 @@ impl<T: Trace> TypedTrace for T {
     }
 }
 
-
 #[repr(C)]
 struct HeapAnnotation {
     layout: Layout,
@@ -97,7 +93,7 @@ struct HeapAnnotation {
 }
 
 #[repr(C)]
-struct ObjectVTable {
+pub struct ObjectVTable {
     trace: unsafe fn(ptr: NonNull<()>, cxt: &mut TraceContext),
     #[cfg(feature = "drop_heap")]
     drop: unsafe fn(ptr: NonNull<()>),
@@ -108,9 +104,3 @@ pub struct AnnotatedHeapData<T> {
     annotation: HeapAnnotation,
     data: T,
 }
-
-
-
-
-
-
