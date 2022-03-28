@@ -1,4 +1,5 @@
 use bitflags::bitflags;
+use std::hint::spin_loop;
 use std::ptr::NonNull;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 
@@ -56,10 +57,11 @@ impl MarkWord for TestMark {
 bitflags! {
     struct HotspotMarkBits: usize {
         // Areas of
-        const LOCK = 0b0000_0011;
-        const AGE  = 0b0011_1100;
+        const LOCK   = 0b0000_0011;
+        const BIASED = 0b0000_0100;
+        const AGE    = 0b0111_1000;
         const PTR  = !Self::LOCK.bits;
-        const HASH = !(Self::LOCK.bits | Self::AGE.bits);
+        const HASH = !(Self::LOCK.bits | Self::BIASED.bits | Self::AGE.bits);
 
         // States
         const LOCKED    = 0b00;
@@ -70,7 +72,29 @@ bitflags! {
     }
 }
 
+// Mark Regions
+const LOCK_BITS: usize = 0b0000_0011;
+const BIASED_BITS: usize = 0b0000_0100;
+const AGE_BITS: usize = 0b0111_1000;
+
+// Lock States
+const LOCKED: usize = 0b00;
+const UNLOCKED: usize = 0b01;
+const MONITOR: usize = 0b10;
+const MARKED: usize = 0b11;
+const INFLATING: usize = 0;
+
+// #[repr(usize)]
+// enum MarkState {
+//     Unlocked = 0b01,
+//     Locked = 0b00,
+//     Monitor = 0b10,
+//     Marked = 0b11,
+// }
+
 impl HotspotMarkBits {
+    // pub fn state(self) -> MarkState {}
+
     pub fn inflating(self) -> bool {
         self == Self::INFLATING
     }
@@ -89,6 +113,11 @@ impl HotspotMarkBits {
     }
 }
 
+pub trait LockRecord {
+    fn store(&mut self, value: usize) -> *mut usize;
+    fn forfeit(&mut self, ptr: *mut usize);
+}
+
 #[repr(transparent)]
 #[derive(Default, Debug)]
 pub struct HotspotMark {
@@ -96,15 +125,47 @@ pub struct HotspotMark {
 }
 
 impl HotspotMark {
-    pub fn lock(&self, thread_ptr: NonNull<()>) {
-        let mut prev = self.mark.load(Ordering::SeqCst);
-        // loop {
-        //
-        //
-        //     match self.mark.compare_exchange_weak() {
-        //
-        //     }
-        // }
+    pub fn lock<S: LockRecord>(&self, lock_record: &mut S) {
+        let mut prev_mark = self.mark.load(Ordering::SeqCst);
+
+        while prev_mark == INFLATING {
+            spin_loop();
+            prev_mark = self.mark.load(Ordering::SeqCst);
+        }
+
+        match prev_mark & LOCK_BITS {
+            UNLOCKED => {
+                // Store current mark
+                let obj_ptr = lock_record.store(prev_mark);
+                debug_assert_eq!(
+                    obj_ptr as usize % 3,
+                    0,
+                    "Lock record alignment must be at least 8"
+                );
+
+                match self.mark.compare_exchange(
+                    prev_mark,
+                    obj_ptr as usize,
+                    Ordering::SeqCst,
+                    Ordering::SeqCst,
+                ) {
+                    // Successfully obtained lock
+                    Ok(_) => return,
+                    Err(_) => {
+                        lock_record.forfeit(obj_ptr);
+                    }
+                }
+
+                // TODO: Attempt claim block
+            }
+            LOCKED => {
+                // TODO: Inflate Lock
+            }
+            MONITOR => {
+                // TODO: Wait on monitor
+            }
+            _ => panic!("Multiple heaps may be referencing the same region"),
+        };
     }
 }
 

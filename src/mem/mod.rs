@@ -3,13 +3,15 @@ use crate::mem::block::AllocationBlock;
 use crate::ptr::{DirectObjPtr, DirectObjUnknown};
 use crate::trace::{AnnotatedMixedHeap, HeapObjectLayout, HeapObjectSetup};
 use std::alloc::Layout;
+use std::iter::Copied;
 use std::marker::PhantomData;
 use std::mem::{align_of, MaybeUninit};
 use std::ptr::NonNull;
+use std::slice::Iter;
 
 pub mod block;
 
-pub trait Heap<T>: VisitHeap {
+pub trait Heap<T> {
     /// Returns a direct pointer to the uninitialized data if the allocation was successful.
     /// Otherwise None will be returned to indicate allocation failed.
     fn try_alloc_uninit(&mut self) -> Option<NonNull<MaybeUninit<T>>>;
@@ -64,6 +66,15 @@ impl<R, L> HeapRegion<R, L> {
     }
 }
 
+unsafe impl<'a, R, L: HeapObjectLayout> VisitHeap for &'a HeapRegion<R, L> {
+    type Layout = L;
+    type EntryIter = Copied<Iter<'a, DirectObjUnknown>>;
+
+    fn iter_entries(self) -> Self::EntryIter {
+        self.objects.iter().copied()
+    }
+}
+
 impl<R: AllocationBlock, L> HeapRegion<R, L> {
     pub fn remaining_space(&self) -> usize {
         self.region.len()
@@ -96,5 +107,15 @@ impl<R: AllocationBlock, L: HeapObjectLayout> HeapRegion<R, L> {
         let allocated = self.alloc_layout(layout)?;
 
         unsafe { Some(L::init_object(allocated, layout)) }
+    }
+}
+
+impl<T, R, L> Heap<T> for HeapRegion<R, L>
+where
+    R: AllocationBlock,
+    L: HeapObjectLayout + HeapObjectSetup<T>,
+{
+    fn try_alloc_uninit(&mut self) -> Option<NonNull<MaybeUninit<T>>> {
+        self.alloc().map(NonNull::cast)
     }
 }
