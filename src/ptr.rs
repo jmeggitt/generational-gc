@@ -36,6 +36,21 @@ impl<T: ?Sized> Pointer for GcPtr<T> {
     }
 }
 
+
+/// I'm not happy with how this looks, but it should be completely safe. To access data it will need
+/// to be used with a `ThreadAllocator` to ensure that it meets the lifetime requirements and to
+/// verify that the pointer it uses matches the specified vm. It should correctly produce
+/// an error when used against a different vm, but will continue to work for any `ThreadAllocator`
+/// on the vm it was allocated for. It will also be able to deny objects that have since been
+/// deleted.
+pub struct SafeGcPtr<T: ?Sized> {
+    vm: NonNull<()>,
+    ptr: NonNull<T>,
+    generation: u64,
+}
+
+
+
 // TODO: Implement generational indices for weak GC pointers
 // pub struct WeakGcPtr<T> {
 //     ptr: GcPtr<T>,
